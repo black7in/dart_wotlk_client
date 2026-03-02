@@ -4,7 +4,7 @@ description: >-
   Handles SRP6 auth, world session, chat, channels, guild and player lookups.
   No native bindings — platform-agnostic transport interface.
 version: 1.0.0
-repository: https://github.com/black7in/darth_wotlk_client.git
+repository: https://github.com/black7in/dart_wotlk_client.git
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
