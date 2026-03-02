@@ -1,0 +1,13 @@
+name: dart_wotlk_client
+description: >-
+  Pure Dart client library for World of Warcraft 3.3.5a (WotLK) servers (AzerothCore).
+  Handles SRP6 auth, world session, chat, channels, guild and player lookups.
+  No native bindings — platform-agnostic transport interface.
+version: 1.0.0
+repository: https://github.com/black7in/darth_wotlk_client.git
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  crypto: ^3.0.0
