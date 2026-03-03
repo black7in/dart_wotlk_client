@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -11,6 +12,7 @@ class TcpTransport implements ITransport {
   final int port;
 
   Socket? _socket;
+  StreamController<Uint8List>? _controller;
   Stream<Uint8List>? _broadcastStream;
 
   TcpTransport({required this.host, required this.port});
@@ -21,9 +23,18 @@ class TcpTransport implements ITransport {
   @override
   Future<void> connect() async {
     _socket = await Socket.connect(host, port);
-    _broadcastStream = _socket!
-        .map((data) => Uint8List.fromList(data))
-        .asBroadcastStream();
+    // Use a broadcast StreamController so there is always exactly ONE
+    // underlying socket subscription.  asBroadcastStream() cancels the
+    // source when the last listener leaves, which permanently kills a
+    // single-subscription socket stream.  With a controller the socket
+    // stays alive across subscription gaps (auth → login → keepAlive).
+    _controller = StreamController<Uint8List>.broadcast();
+    _socket!.listen(
+      (data) => _controller!.add(Uint8List.fromList(data)),
+      onError: _controller!.addError,
+      onDone: _controller!.close,
+    );
+    _broadcastStream = _controller!.stream;
   }
 
   @override
@@ -43,7 +54,9 @@ class TcpTransport implements ITransport {
   @override
   Future<void> close() async {
     await _socket?.close();
+    await _controller?.close();
     _socket = null;
+    _controller = null;
     _broadcastStream = null;
   }
 }
