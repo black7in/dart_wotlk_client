@@ -1,6 +1,6 @@
 /// Simple command-line client for WoW 3.3.5a authentication
 ///
-/// Usage: dart run bin/auth_client.dart <host> <port> <username> <password> [options]
+/// Usage: dart run bin/auth_client.dart <host[:port]> <username> <password> [options]
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -14,18 +14,39 @@ Future<void> main(List<String> args) async {
     exit(0);
   }
 
-  if (args.length < 4) {
+  if (args.length < 3) {
     _printUsage();
     exit(1);
   }
 
-  final host = args[0];
-  final port = int.parse(args[1]);
-  final username = args[2];
-  final password = args[3];
+  // Parse host[:port] — port defaults to 3724 if omitted
+  final hostArg = args[0];
+  final String host;
+  final int port;
+  if (hostArg.contains(':')) {
+    final colonIdx = hostArg.lastIndexOf(':');
+    host = hostArg.substring(0, colonIdx);
+    port = int.parse(hostArg.substring(colonIdx + 1));
+  } else {
+    host = hostArg;
+    port = 3724;
+  }
+
+  final username = args[1];
+  final password = args[2];
 
   // Optional: Enable verbose mode with -v or --verbose flag
   final verbose = args.contains('-v') || args.contains('--verbose');
+
+  // Single stdin broadcast stream — reused for realm selection, char selection and chat
+  try {
+    stdin.echoMode = true;
+    stdin.lineMode = true;
+  } catch (_) {}
+  final stdinLines = stdin
+      .transform(SystemEncoding().decoder)
+      .transform(LineSplitter())
+      .asBroadcastStream();
 
   if (verbose) {
     print('═══════════════════════════════════════════════════');
@@ -89,11 +110,41 @@ Future<void> main(List<String> args) async {
       print('═══════════════════════════════════════════════════');
     }
 
-    // Try to connect to the first available realm
+    // Ask user to select a realm
     if (result.realms != null && result.realms!.isNotEmpty) {
-      final firstRealm = result.realms!.first;
+      final onlineRealms = result.realms!.where((r) => r.isOnline).toList();
 
-      if (firstRealm.isOnline) {
+      if (onlineRealms.isEmpty) {
+        print('No realms are currently online.');
+        exit(0);
+      }
+
+      print('');
+      print('Select a realm (1-${result.realms!.length}) or 0 to exit:');
+      stdout.write('> ');
+      await stdout.flush();
+
+      final realmInput = await stdinLines.first;
+      final realmSelection = int.tryParse(realmInput.trim()) ?? -1;
+      if (realmSelection < 0 || realmSelection > result.realms!.length) {
+        print('Invalid selection. Exiting...');
+        exit(1);
+      }
+
+      if (realmSelection == 0) {
+        print('Exiting...');
+        exit(0);
+      }
+
+      final selectedRealm = result.realms![realmSelection - 1];
+
+      if (!selectedRealm.isOnline) {
+        print('Selected realm is offline. Exiting...');
+        exit(1);
+      }
+
+      final firstRealm = selectedRealm;
+
         print('');
         print('═══════════════════════════════════════════════════');
         print('  CONNECTING TO WORLD SERVER');
@@ -215,43 +266,22 @@ Future<void> main(List<String> args) async {
             stdout.write('> ');
             await stdout.flush();
 
-            try {
-              stdin.echoMode = true;
-              stdin.lineMode = true;
-            } catch (e) {
-              // Ignore on systems where this isn't supported
+            final charInput = await stdinLines.first;
+            final charSelection = int.tryParse(charInput.trim()) ?? -1;
+            if (charSelection < 0 || charSelection > worldResult.characters!.length) {
+              print('Invalid selection. Exiting...');
+              await worldClient.transport.close();
+              exit(1);
+            }
+            if (charSelection == 0) {
+              print('Exiting...');
+              await worldClient.transport.close();
+              exit(0);
             }
 
-            final selectionCompleter = Completer<int>();
-            var isSelectingCharacter = true;
             WorldLoginResult? loginResult;
 
-            final stdinSub = stdin
-                .transform(SystemEncoding().decoder)
-                .transform(LineSplitter())
-                .listen((input) async {
-              if (isSelectingCharacter) {
-                if (input.trim().isEmpty) {
-                  print('No selection made. Exiting...');
-                  await worldClient.transport.close();
-                  exit(0);
-                }
-
-                final selection = int.tryParse(input.trim());
-                if (selection == null || selection < 0 || selection > worldResult.characters!.length) {
-                  print('Invalid selection. Exiting...');
-                  await worldClient.transport.close();
-                  exit(1);
-                }
-
-                if (selection == 0) {
-                  print('Exiting...');
-                  await worldClient.transport.close();
-                  exit(0);
-                }
-
-                selectionCompleter.complete(selection);
-              } else {
+            final stdinSub = stdinLines.listen((input) async {
                 // Handle chat commands (only after login)
                 if (loginResult == null) return;
 
@@ -388,14 +418,9 @@ Future<void> main(List<String> args) async {
                 } else {
                   print('Unknown command. Type /say, /yell, /w, /guild, /officer, /emote, /who, /join, /leave, /ch, /groster, or /quit');
                 }
-              }
             });
 
-            // Wait for character selection
-            final selection = await selectionCompleter.future;
-            isSelectingCharacter = false;
-
-            final selectedChar = worldResult.characters![selection - 1];
+            final selectedChar = worldResult.characters![charSelection - 1];
             print('');
             print('═══════════════════════════════════════════════════');
             print('  LOGGING IN WITH: ${selectedChar.name}');
@@ -473,7 +498,6 @@ Future<void> main(List<String> args) async {
           }
           print('═══════════════════════════════════════════════════');
         }
-      }
     }
 
     exit(0);
@@ -588,13 +612,17 @@ void _printGuildRoster(List<GuildMemberInfo> members) {
 void _printUsage() {
   print('WoW 3.3.5a Authentication Client');
   print('');
-  print('Usage: dart run bin/auth_client.dart <host> <port> <username> <password> [options]');
+  print('Usage: dart run bin/auth_client.dart <host[:port]> <username> <password> [options]');
+  print('');
+  print('  host[:port]  Auth server address. Port defaults to 3724 if omitted.');
   print('');
   print('Options:');
   print('  -v, --verbose    Enable verbose output (shows packets and session key)');
   print('  -h, --help       Show this help message');
   print('');
   print('Examples:');
-  print('  dart run bin/auth_client.dart 127.0.0.1 3724 myaccount mypassword');
-  print('  dart run bin/auth_client.dart 127.0.0.1 3724 myaccount mypassword -v');
+  print('  dart run bin/auth_client.dart 127.0.0.1 myaccount mypassword');
+  print('  dart run bin/auth_client.dart logon.wow-titan.com myaccount mypassword');
+  print('  dart run bin/auth_client.dart usa.wowaura.com:3200 myaccount mypassword');
+  print('  dart run bin/auth_client.dart 127.0.0.1 myaccount mypassword -v');
 }

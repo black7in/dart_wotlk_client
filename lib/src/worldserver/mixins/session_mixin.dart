@@ -38,6 +38,11 @@ mixin SessionMixin on WorldClientBase, ChatMixin {
     Timer? pingTimer;
     final buffer = <int>[];
     bool isAlive = true;
+    // Partial-packet state: set once the header is decrypted, cleared when the
+    // full packet body has arrived.  Prevents double-decryption of the same
+    // header when a large packet arrives split across multiple TCP segments.
+    int? pendingSize;
+    int? pendingOpcode;
 
     pingTimer = Timer.periodic(pingInterval, (timer) {
       if (!isAlive) {
@@ -64,11 +69,23 @@ mixin SessionMixin on WorldClientBase, ChatMixin {
         buffer.addAll(data);
 
         while (buffer.length >= 4 && isAlive) {
-          final header = Uint8List.fromList(buffer.sublist(0, 4));
-          authCrypt!.decryptRecv(header);
+          int size;
+          int opcode;
 
-          final size = (header[0] << 8) | header[1];
-          final opcode = header[2] | (header[3] << 8);
+          if (pendingSize != null) {
+            // Header was already decrypted in a previous callback invocation
+            // (packet arrived split across TCP segments).  Reuse the saved
+            // values — re-decrypting would advance the RC4 state incorrectly.
+            size = pendingSize!;
+            opcode = pendingOpcode!;
+          } else {
+            final header = Uint8List.fromList(buffer.sublist(0, 4));
+            authCrypt!.decryptRecv(header);
+            size = (header[0] << 8) | header[1];
+            opcode = header[2] | (header[3] << 8);
+            pendingSize = size;
+            pendingOpcode = opcode;
+          }
 
           final totalSize = 4 + size - 2;
           if (buffer.length < totalSize) break;
@@ -76,6 +93,8 @@ mixin SessionMixin on WorldClientBase, ChatMixin {
           final fullPacket = Uint8List.fromList(buffer.sublist(0, totalSize));
           final payload = Uint8List.fromList(buffer.sublist(4, totalSize));
           buffer.removeRange(0, totalSize);
+          pendingSize = null;
+          pendingOpcode = null;
 
           final opcodeName = getOpcodeName(opcode);
 

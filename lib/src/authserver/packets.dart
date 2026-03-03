@@ -16,6 +16,7 @@ class AuthLogonChallengePacket extends AuthPacket {
   final String platform;
   final String os;
   final String locale;
+  final List<int> ip;
 
   AuthLogonChallengePacket({
     required this.username,
@@ -23,11 +24,13 @@ class AuthLogonChallengePacket extends AuthPacket {
     this.platform = PLATFORM,
     this.os = OS_REVERSED,
     this.locale = LOCALE_REVERSED,
+    this.ip = const [0, 0, 0, 0],
   });
 
   @override
   Uint8List toBytes() {
-    final userBytes = utf8.encode(username);
+    // Username must be uppercase in the challenge packet (matches SRP6 convention)
+    final userBytes = ascii.encode(username.toUpperCase());
     final I_len = userBytes.length;
     final int size = I_len + 30;
 
@@ -36,8 +39,8 @@ class AuthLogonChallengePacket extends AuthPacket {
     // Command
     bb.addByte(AUTH_LOGON_CHALLENGE);
 
-    // Error (always 0x00 for client->server)
-    bb.addByte(0x00);
+    // Protocol version: 0x08 for WotLK 3.3.5a
+    bb.addByte(0x08);
 
     // Size (uint16 little-endian)
     bb.addByte(size & 0xff);
@@ -55,28 +58,28 @@ class AuthLogonChallengePacket extends AuthPacket {
     bb.addByte(build & 0xff);
     bb.addByte((build >> 8) & 0xff);
 
-    // Platform[4] -> "x86\0"
+    // Platform[4] -> "68x\0" ("x86" reversed, same convention as OS/locale)
     bb.add(ascii.encode('$platform\u0000'));
 
     // OS[4] -> "niW\0" (reversed)
     bb.add(ascii.encode('$os\u0000'));
 
-    // Locale[4] -> "SUne" (reversed)
+    // Locale[4] -> "SUne" (reversed "enUS"), or other locale
     bb.add(ascii.encode(locale));
 
-    // Timezone bias (uint32 little-endian)
+    // Timezone bias (uint32 little-endian) — 0 is acceptable
     bb.addByte(0);
     bb.addByte(0);
     bb.addByte(0);
     bb.addByte(0);
 
-    // IP (uint32 little-endian) -> 0
-    bb.addByte(0);
-    bb.addByte(0);
-    bb.addByte(0);
-    bb.addByte(0);
+    // Client local IP (uint32 little-endian)
+    bb.addByte(ip[0]);
+    bb.addByte(ip[1]);
+    bb.addByte(ip[2]);
+    bb.addByte(ip[3]);
 
-    // Username length and bytes
+    // Username length and bytes (uppercase)
     bb.addByte(I_len);
     bb.add(userBytes);
 

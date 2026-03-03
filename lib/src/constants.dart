@@ -54,8 +54,8 @@ const int VERSION_MAJOR = 3;
 const int VERSION_MINOR = 3;
 const int VERSION_PATCH = 5;
 
-/// Platform identifier
-const String PLATFORM = 'x86';
+/// Platform identifier (reversed, like OS and locale — sent as LE uint32)
+const String PLATFORM = '68x';
 
 /// OS identifier (reversed for network protocol)
 const String OS_REVERSED = 'niW'; // "Win" reversed

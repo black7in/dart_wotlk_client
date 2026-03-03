@@ -9,6 +9,7 @@ import '../opcodes/opcodes.dart';
 import '../packets/client/move_worldport_ack.dart';
 import '../packets/client/player_login.dart';
 import '../packets/client/ready_for_account_data_times.dart';
+import '../packets/client/time_sync_resp.dart';
 import '../packets/server/account_data_times.dart';
 import '../packets/server/guild_event.dart';
 import '../packets/server/guild_roster.dart';
@@ -40,6 +41,8 @@ mixin LoginMixin on WorldClientBase {
       final completer = Completer<WorldLoginResult>();
       LoginVerifyWorldPacket? verifyWorldData;
       bool loginVerified = false;
+      int? pendingSize;
+      int? pendingOpcode;
 
       StreamSubscription? subscription;
       subscription = transport.dataStream.listen(
@@ -47,11 +50,22 @@ mixin LoginMixin on WorldClientBase {
           buffer.addAll(data);
 
           while (buffer.length >= 4) {
-            final header = Uint8List.fromList(buffer.sublist(0, 4));
-            authCrypt!.decryptRecv(header);
+            int size;
+            int opcode;
 
-            final size = (header[0] << 8) | header[1];
-            final opcode = header[2] | (header[3] << 8);
+            if (pendingSize != null) {
+              // Header was already decrypted in a previous callback invocation
+              // (packet arrived split across TCP segments).
+              size = pendingSize!;
+              opcode = pendingOpcode!;
+            } else {
+              final header = Uint8List.fromList(buffer.sublist(0, 4));
+              authCrypt!.decryptRecv(header);
+              size = (header[0] << 8) | header[1];
+              opcode = header[2] | (header[3] << 8);
+              pendingSize = size;
+              pendingOpcode = opcode;
+            }
 
             final opcodeName = getOpcodeName(opcode);
             if (verbose &&
@@ -65,6 +79,8 @@ mixin LoginMixin on WorldClientBase {
 
             final fullPacket = Uint8List.fromList(buffer.sublist(0, totalSize));
             buffer.removeRange(0, totalSize);
+            pendingSize = null;
+            pendingOpcode = null;
 
             if (opcode == ServerOpcode.SMSG_LOGIN_VERIFY_WORLD.value) {
               if (verbose) print('[WorldClient] Received SMSG_LOGIN_VERIFY_WORLD');
@@ -154,6 +170,17 @@ mixin LoginMixin on WorldClientBase {
                 }
               } catch (e) {
                 if (verbose) print('[WorldClient] Error parsing SMSG_GUILD_ROSTER (login): $e');
+              }
+            } else if (opcode == ServerOpcode.SMSG_TIME_SYNC_REQ.value) {
+              try {
+                if (fullPacket.length >= 8) {
+                  final counter = ByteData.sublistView(fullPacket, 4, 8).getUint32(0, Endian.little);
+                  final ticks = DateTime.now().millisecondsSinceEpoch;
+                  sendEncrypted(TimeSyncRespPacket(counter: counter, ticks: ticks).buildClientPacket());
+                  if (verbose) print('[WorldClient] Sent CMSG_TIME_SYNC_RESP (counter: $counter) during login');
+                }
+              } catch (e) {
+                if (verbose) print('[WorldClient] Error handling TIME_SYNC_REQ: $e');
               }
             } else if (opcode == ServerOpcode.SMSG_PONG.value) {
               try {

@@ -222,8 +222,31 @@ class WowAuthClient {
         },
       );
 
+      // Get local outgoing IPv4 address
+      List<int> localIp = [0, 0, 0, 0];
+      try {
+        final interfaces = await NetworkInterface.list(
+          type: InternetAddressType.IPv4,
+          includeLinkLocal: false,
+        );
+        for (final iface in interfaces) {
+          for (final addr in iface.addresses) {
+            if (!addr.isLoopback) {
+              localIp = addr.rawAddress.toList();
+              break;
+            }
+          }
+          if (localIp[0] != 0) break;
+        }
+      } catch (_) {
+        // fallback to 0.0.0.0
+      }
+
       // Send AUTH_LOGON_CHALLENGE
-      final challengePacket = AuthLogonChallengePacket(username: username);
+      final challengePacket = AuthLogonChallengePacket(
+        username: username,
+        ip: localIp,
+      );
       final challengeBytes = challengePacket.toBytes();
 
       // Delay to allow server to initialize

@@ -199,7 +199,7 @@ mixin AuthMixin on WorldClientBase {
 
       StreamSubscription? streamSubscription;
       streamSubscription = transport.dataStream.listen(
-        (data) async {
+        (data) {
           buffer.addAll(data);
           if (verbose) debugPrintPacket('recv', data);
 
@@ -243,7 +243,8 @@ mixin AuthMixin on WorldClientBase {
               );
 
               transport.send(authSession.buildClientPacket());
-              if (transport is TcpTransport) await (transport as TcpTransport).flush();
+              // Fire-and-forget flush: no await to avoid async callback re-entrancy
+              if (transport is TcpTransport) (transport as TcpTransport).flush();
               authSent = true;
               crypt.init(sessionKey);
               if (verbose) print('[WorldClient] Sent AUTH_SESSION');
@@ -288,7 +289,7 @@ mixin AuthMixin on WorldClientBase {
                     if (!charEnumSent) {
                       if (verbose) print('[WorldClient] Sending CMSG_CHAR_ENUM...');
                       sendEncrypted(CharEnumPacket().buildClientPacket());
-                      if (transport is TcpTransport) await (transport as TcpTransport).flush();
+                      if (transport is TcpTransport) (transport as TcpTransport).flush();
                       charEnumSent = true;
                     }
                   } else {
