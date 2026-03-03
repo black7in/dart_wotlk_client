@@ -36,13 +36,10 @@ mixin SessionMixin on WorldClientBase, ChatMixin {
   }) async {
     int pingCounter = 0;
     Timer? pingTimer;
-    final buffer = <int>[];
     bool isAlive = true;
-    // Partial-packet state: set once the header is decrypted, cleared when the
-    // full packet body has arrived.  Prevents double-decryption of the same
-    // header when a large packet arrives split across multiple TCP segments.
-    int? pendingSize;
-    int? pendingOpcode;
+    // rxBuffer / rxPendingSize / rxPendingOpcode are inherited from loginToWorld
+    // via WorldClientBase — do NOT clear them here so any partial packet left
+    // in the buffer by loginToWorld is processed correctly.
 
     pingTimer = Timer.periodic(pingInterval, (timer) {
       if (!isAlive) {
@@ -66,35 +63,35 @@ mixin SessionMixin on WorldClientBase, ChatMixin {
 
     transport.dataStream.listen(
       (data) async {
-        buffer.addAll(data);
+        rxBuffer.addAll(data);
 
-        while (buffer.length >= 4 && isAlive) {
+        while (rxBuffer.length >= 4 && isAlive) {
           int size;
           int opcode;
 
-          if (pendingSize != null) {
+          if (rxPendingSize != null) {
             // Header was already decrypted in a previous callback invocation
             // (packet arrived split across TCP segments).  Reuse the saved
             // values — re-decrypting would advance the RC4 state incorrectly.
-            size = pendingSize!;
-            opcode = pendingOpcode!;
+            size = rxPendingSize!;
+            opcode = rxPendingOpcode!;
           } else {
-            final header = Uint8List.fromList(buffer.sublist(0, 4));
+            final header = Uint8List.fromList(rxBuffer.sublist(0, 4));
             authCrypt!.decryptRecv(header);
             size = (header[0] << 8) | header[1];
             opcode = header[2] | (header[3] << 8);
-            pendingSize = size;
-            pendingOpcode = opcode;
+            rxPendingSize = size;
+            rxPendingOpcode = opcode;
           }
 
           final totalSize = 4 + size - 2;
-          if (buffer.length < totalSize) break;
+          if (rxBuffer.length < totalSize) break;
 
-          final fullPacket = Uint8List.fromList(buffer.sublist(0, totalSize));
-          final payload = Uint8List.fromList(buffer.sublist(4, totalSize));
-          buffer.removeRange(0, totalSize);
-          pendingSize = null;
-          pendingOpcode = null;
+          final fullPacket = Uint8List.fromList(rxBuffer.sublist(0, totalSize));
+          final payload = Uint8List.fromList(rxBuffer.sublist(4, totalSize));
+          rxBuffer.removeRange(0, totalSize);
+          rxPendingSize = null;
+          rxPendingOpcode = null;
 
           final opcodeName = getOpcodeName(opcode);
 

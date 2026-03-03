@@ -48,6 +48,19 @@ abstract class WorldClientBase {
   /// Pending guild roster request.
   Completer<List<GuildMemberInfo>>? pendingGuildRoster;
 
+  /// Persistent TCP receive buffer shared between loginToWorld and
+  /// keepSessionAlive.  loginToWorld clears it on entry; keepSessionAlive
+  /// inherits whatever bytes loginToWorld left so no partial-packet data is
+  /// lost during the phase handoff.
+  final List<int> rxBuffer = [];
+
+  /// RC4-decoded header fields for the current partial packet, if any.
+  /// Non-null when the 4-byte header has been decrypted but the body has not
+  /// fully arrived yet.  Shared so the handoff between loginToWorld and
+  /// keepSessionAlive never re-decrypts an already-advanced RC4 position.
+  int? rxPendingSize;
+  int? rxPendingOpcode;
+
   WorldClientBase({
     required this.transport,
     this.verbose = false,

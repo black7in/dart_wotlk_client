@@ -37,34 +37,35 @@ mixin LoginMixin on WorldClientBase {
       if (transport is TcpTransport) await (transport as TcpTransport).flush();
       if (verbose) print('[WorldClient] Sent CMSG_PLAYER_LOGIN');
 
-      final buffer = <int>[];
+      // Start from a clean slate; keepSessionAlive will inherit this state.
+      rxBuffer.clear();
+      rxPendingSize = null;
+      rxPendingOpcode = null;
       final completer = Completer<WorldLoginResult>();
       LoginVerifyWorldPacket? verifyWorldData;
       bool loginVerified = false;
-      int? pendingSize;
-      int? pendingOpcode;
 
       StreamSubscription? subscription;
       subscription = transport.dataStream.listen(
         (data) {
-          buffer.addAll(data);
+          rxBuffer.addAll(data);
 
-          while (buffer.length >= 4) {
+          while (rxBuffer.length >= 4) {
             int size;
             int opcode;
 
-            if (pendingSize != null) {
+            if (rxPendingSize != null) {
               // Header was already decrypted in a previous callback invocation
               // (packet arrived split across TCP segments).
-              size = pendingSize!;
-              opcode = pendingOpcode!;
+              size = rxPendingSize!;
+              opcode = rxPendingOpcode!;
             } else {
-              final header = Uint8List.fromList(buffer.sublist(0, 4));
+              final header = Uint8List.fromList(rxBuffer.sublist(0, 4));
               authCrypt!.decryptRecv(header);
               size = (header[0] << 8) | header[1];
               opcode = header[2] | (header[3] << 8);
-              pendingSize = size;
-              pendingOpcode = opcode;
+              rxPendingSize = size;
+              rxPendingOpcode = opcode;
             }
 
             final opcodeName = getOpcodeName(opcode);
@@ -75,12 +76,12 @@ mixin LoginMixin on WorldClientBase {
             }
 
             final totalSize = 4 + size - 2;
-            if (buffer.length < totalSize) break;
+            if (rxBuffer.length < totalSize) break;
 
-            final fullPacket = Uint8List.fromList(buffer.sublist(0, totalSize));
-            buffer.removeRange(0, totalSize);
-            pendingSize = null;
-            pendingOpcode = null;
+            final fullPacket = Uint8List.fromList(rxBuffer.sublist(0, totalSize));
+            rxBuffer.removeRange(0, totalSize);
+            rxPendingSize = null;
+            rxPendingOpcode = null;
 
             if (opcode == ServerOpcode.SMSG_LOGIN_VERIFY_WORLD.value) {
               if (verbose) print('[WorldClient] Received SMSG_LOGIN_VERIFY_WORLD');
